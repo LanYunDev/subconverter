@@ -1,150 +1,279 @@
-name: GitHub CI
+name: CI Pipeline
+
 on:
   push:
-    branches: [ master ]
+    branches:
+      - master
     tags:
-      - '**'
-  workflow_dispatch:
+      - 'v*.*.*'
   pull_request:
-
+    branches:
+      - master
+  workflow_dispatch:
+    inputs:
+      include_x86:
+        description: '是否构建 x86 (32-bit)'
+        required: false
+        type: boolean
+        default: false
+      include_arm_v7:
+        description: '是否构建 arm/v7'
+        required: false
+        type: boolean
+        default: false
 concurrency:
   group: ${{ github.ref }}-${{ github.workflow }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  packages: write
+  actions: write
+
 jobs:
-  linux_build:
-    strategy:
-      matrix:
-        include:
-          - arch: x86
-            artifact: subconverter_linux32
-            os: ubuntu-latest
-          - arch: amd64
-            artifact: subconverter_linux64
-            os: ubuntu-latest
-          - arch: armv7
-            artifact: subconverter_armv7
-            os: ubuntu-latest
-          - arch: aarch64
-            artifact: subconverter_aarch64
-            os: ubuntu-latest
-    runs-on: ${{ matrix.os }}
-    name: Linux ${{ matrix.arch }} Build
+  # Shared setup
+  setup:
+    name: Setup Environment
+    runs-on: ubuntu-latest
+    outputs:
+      cache-key-pip: ${{ steps.cache-pip.outputs.cache-hit-key }}
+      cache-key-npm: ${{ steps.cache-npm.outputs.cache-hit-key }}
     steps:
-      - name: Checkout base
+      - name: Checkout code
         uses: actions/checkout@v4
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-      - name: Add commit id into version
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
-        run: SHA=$(git rev-parse --short HEAD) && sed -i 's/\(v[0-9]\.[0-9]\.[0-9]\)/\1-'"$SHA"'/' src/version.h
-      - name: Build
-        run: docker run --rm -v $GITHUB_WORKSPACE:/root/workdir multiarch/alpine:${{ matrix.arch }}-latest-stable /bin/sh -c "apk add bash git nodejs npm && cd /root/workdir && chmod +x scripts/build.alpine.release.sh && bash scripts/build.alpine.release.sh"
-      - name: Upload
+        with:
+          fetch-depth: 0
+
+      - name: Cache pip packages
+        id: cache-pip
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Cache npm modules
+        id: cache-npm
+        uses: actions/cache@v3
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-
+
+  linux_amd64_build:
+    name: Linux amd64 Build
+    needs: setup
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build in container
+        run: |
+          docker run --rm \
+            -v $GITHUB_WORKSPACE:/workspace \
+            -w /workspace \
+            alpine:latest \
+            sh -c "apk add --no-cache bash git nodejs npm python3 py3-pip gcc g++ build-base linux-headers cmake make autoconf automake libtool libpsl-static libidn2-static libunistring-static && \
+                     chmod +x ./scripts/remove_headers.sh && \
+                     ./scripts/remove_headers.sh && \
+                     chmod +x scripts/build.alpine.release.sh && \
+                     ./scripts/build.alpine.release.sh"
+
+      - name: Package artifact
+        run: |
+          tar czf subconverter_linux64.tar.gz subconverter/
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: subconverter/
-      - name: Package Release
-        if: ${{ github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/') }}
-        run: tar czf ${{ matrix.artifact }}.tar.gz subconverter
-      - name: Draft Release
-        if: ${{ github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/') }}
-        uses: softprops/action-gh-release@v2
-        with:
-          files: ${{ matrix.artifact }}.tar.gz
-          draft: true
+          name: subconverter_linux64_amd64.tar.gz
+          path: subconverter_linux64.tar.gz
 
-  macos_build:
+  linux_arm_build:
+    name: Linux ARM Build
+    needs: setup
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         include:
+          - arch: aarch64
+            platform: linux/arm64
+            artifact: subconverter_aarch64.tar.gz
+          - arch: armv7
+            platform: linux/arm/v7
+            if: ${{ (inputs.include_arm_v7 || 'false') == 'true' }}
+            artifact: subconverter_armv7.tar.gz
           - arch: x86
-            artifact: subconverter_darwin64
-            os: macos-13
-          - arch: arm
-            artifact: subconverter_darwinarm
-            os: macos-14
-    runs-on: ${{ matrix.os }}
-    name: macOS ${{ matrix.arch }} Build
+            platform: linux/386
+            if: ${{ (inputs.include_x86 || 'false') == 'true' }}
+            artifact: subconverter_linux32.tar.gz
+      fail-fast: false
     steps:
-      - name: Checkout base
+      - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create Dockerfile
+        run: |
+          cat > Dockerfile.build << 'EOD'
+          FROM alpine:latest
+          RUN apk add --no-cache bash git nodejs npm python3 py3-pip gcc g++ build-base linux-headers cmake make autoconf automake libtool libpsl-static libidn2-static libunistring-static
+          WORKDIR /workspace
+          COPY . .
+          RUN chmod +x ./scripts/remove_headers.sh && \
+              ./scripts/remove_headers.sh && \
+              chmod +x scripts/build.alpine.release.sh && \
+              ./scripts/build.alpine.release.sh
+          EOD
+
+      - name: Build with QEMU
+        run: |
+          docker buildx build --platform ${{ matrix.platform }} \
+            --load -t builder -f Dockerfile.build .
+          
+          # 从容器中复制出构建好的文件
+          container_id=$(docker create builder)
+          docker cp $container_id:/workspace/subconverter ./
+          docker rm $container_id
+
+      - name: Package artifact
+        run: |
+          tar czf ${{ matrix.artifact }} subconverter/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: subconverter_linuxArm_${{ matrix.arch }}.tar.gz
+          path: ${{ matrix.artifact }}
+
+  macos_build:
+    name: macOS ${{ matrix.arch }} Build
+    needs: setup
+    runs-on: macos-14
+    strategy:
+      matrix:
+        include:
+          - arch: arm64
+            artifact: subconverter_darwinarm.tar.gz
+          # - arch: x86_64
+          #   artifact: subconverter_darwin64.tar.gz
+      max-parallel: 2
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: brew install rapidjson
+
       - name: Add commit id into version
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         run: SHA=$(git rev-parse --short HEAD) && sed -i -e 's/\(v[0-9]\.[0-9]\.[0-9]\)/\1-'"$SHA"'/' src/version.h
+      
+      - name: Remove header features
+        run: bash scripts/remove_headers.sh
+      
       - name: Build
         run: bash scripts/build.macos.release.sh
-      - name: Upload
+        env:
+          CFLAGS: "-Wno-deprecated-declarations"
+          CXXFLAGS: "-Wno-deprecated-declarations"
+
+      - name: Package artifact
+        run: tar czf ${{ matrix.artifact }} subconverter/
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: subconverter/
-      - name: Package Release
-        if: ${{ github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/') }}
-        run: tar czf ${{ matrix.artifact }}.tar.gz subconverter
-      - name: Draft Release
-        if: ${{ github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/') }}
-        uses: softprops/action-gh-release@v2
-        with:
-          files: ${{ matrix.artifact }}.tar.gz
-          draft: true
+          name: subconverter_macos_${{ matrix.arch }}.tar.gz
+          path: ${{ matrix.artifact }}
 
   windows_build:
+    name: Windows Builds
+    needs: setup
+    runs-on: windows-latest
     strategy:
       matrix:
         include:
           - arch: x86
-            artifact: subconverter_win32
             env: i686
             msystem: MINGW32
-          - arch: amd64
-            artifact: subconverter_win64
+            artifact: subconverter_win32.7z
+          - arch: x86_64
             env: x86_64
             msystem: MINGW64
-    runs-on: windows-latest
-    name: Windows ${{ matrix.arch }} Build
+            artifact: subconverter_win64.7z
+      max-parallel: 2
     defaults:
       run:
         shell: msys2 {0}
     steps:
-      - name: Checkout base
-        uses: actions/checkout@v4
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+          python-version: '3.13'
+
+      - uses: actions/setup-node@v4
         with:
-          node-version: '16'
-      - name: Setup MSYS2
-        uses: msys2/setup-msys2@v2
+          node-version: 'latest'
+
+      - uses: msys2/setup-msys2@v2
         with:
           update: true
           install: base-devel git mingw-w64-${{ matrix.env }}-gcc mingw-w64-${{ matrix.env }}-cmake mingw-w64-${{ matrix.env }}-pcre2 patch
           msystem: ${{ matrix.msystem }}
           path-type: inherit
-      - name: Add commit id into version
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
-        run: SHA=$(git rev-parse --short HEAD) && sed -i 's/\(v[0-9]\.[0-9]\.[0-9]\)/\1-'"$SHA"'/' src/version.h
+          
+      - name: Remove header features
+        run: bash scripts/remove_headers.sh
+
       - name: Build
         run: bash scripts/build.windows.release.sh
-      - name: Upload
+
+      - name: Package artifact
+        run: 7z a ${{ matrix.artifact }} subconverter/
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: subconverter/
-      - name: Package Release
-        if: ${{ github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/') }}
-        run: 7z a ${{ matrix.artifact }}.7z subconverter/
-      - name: Draft Release
-        if: ${{ github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/') }}
+          name: subconverter_windows_${{ matrix.arch }}.7z
+          path: ${{ matrix.artifact }}
+
+  release:
+    name: Create GitHub Release
+    needs:
+      - linux_amd64_build
+      - linux_arm_build
+      - macos_build
+      - windows_build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ matrix.artifact }}.7z
-          draft: true
+          files: release-artifacts/*
+          draft: false
+

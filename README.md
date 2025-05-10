@@ -1,3 +1,9 @@
+清除特征HTTP标头(SubConverter-Request,SubConverter-Version)
+
+相关依赖现代化
+
+---
+
 # subconverter
 
 Utility to convert between various proxy subscription formats.

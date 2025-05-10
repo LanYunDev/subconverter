@@ -1,8 +1,12 @@
 #!/bin/bash
 set -xe
 
-apk add gcc g++ build-base linux-headers cmake make autoconf automake libtool python2 python3
-apk add mbedtls-dev mbedtls-static zlib-dev rapidjson-dev zlib-static pcre2-dev
+# 安装基本构建工具和依赖
+apk add gcc g++ build-base linux-headers cmake make autoconf automake libtool python3
+# 添加缺少的依赖: libpsl和libidn2 - 解决链接错误
+apk add mbedtls-dev mbedtls-static zlib-dev rapidjson-dev zlib-static pcre2-dev 
+# 安装静态库版本
+apk add libpsl-static libidn2-static libunistring-static
 
 git clone https://github.com/curl/curl --depth=1 --branch curl-8_6_0
 cd curl
@@ -18,14 +22,16 @@ cd ..
 
 git clone https://github.com/ftk/quickjspp --depth=1
 cd quickjspp
-cmake -DCMAKE_BUILD_TYPE=Release .
+mkdir -p build
+cd build
+cmake -DCMAKE_BUILD_TYPE=Release ..
 make quickjs -j3 > /dev/null
 install -d /usr/lib/quickjs/
 install -m644 quickjs/libquickjs.a /usr/lib/quickjs/
 install -d /usr/include/quickjs/
-install -m644 quickjs/quickjs.h quickjs/quickjs-libc.h /usr/include/quickjs/
-install -m644 quickjspp.hpp /usr/include/
-cd ..
+install -m644 ../quickjs/quickjs.h ../quickjs/quickjs-libc.h /usr/include/quickjs/
+install -m644 ../quickjspp.hpp /usr/include/
+cd ../..
 
 git clone https://github.com/PerMalmberg/libcron --depth=1
 cd libcron
@@ -34,7 +40,7 @@ cmake -DCMAKE_BUILD_TYPE=Release .
 make libcron install -j3
 cd ..
 
-git clone https://github.com/ToruNiina/toml11 --branch="v4.3.0" --depth=1
+git clone https://github.com/ToruNiina/toml11 --depth=1
 cd toml11
 cmake -DCMAKE_CXX_STANDARD=11 .
 make install -j4
@@ -45,11 +51,15 @@ cmake -DCMAKE_BUILD_TYPE=Release .
 make -j3
 rm subconverter
 # shellcheck disable=SC2046
-g++ -o base/subconverter $(find CMakeFiles/subconverter.dir/src/ -name "*.o")  -static -lpcre2-8 -lyaml-cpp -L/usr/lib64 -lcurl -lmbedtls -lmbedcrypto -lmbedx509 -lz -l:quickjs/libquickjs.a -llibcron -O3 -s
+# 使用静态库路径，添加libunistring链接
+g++ -o base/subconverter $(find CMakeFiles/subconverter.dir/src/ -name "*.o") -static -lpcre2-8 -lyaml-cpp -L/usr/lib64 -lcurl -lmbedtls -lmbedcrypto -lmbedx509 -lz -l:quickjs/libquickjs.a -llibcron -L/usr/lib -lpsl -lidn2 -lunistring -O3 -s
 
-python3 -m ensurepip
-python3 -m pip install gitpython
+# 使用Python的虚拟环境解决externally-managed-environment问题
+python3 -m venv /tmp/venv
+. /tmp/venv/bin/activate
+pip install gitpython
 python3 scripts/update_rules.py -c scripts/rules_config.conf
+deactivate
 
 cd base
 chmod +rx subconverter

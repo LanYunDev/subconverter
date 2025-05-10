@@ -1,6 +1,10 @@
 #!/bin/bash
 set -xe
 
+# 设置编译标志以禁用弃用警告
+export CFLAGS="-Wno-deprecated-declarations"
+export CXXFLAGS="-Wno-deprecated-declarations"
+
 brew reinstall rapidjson zlib pcre2 pkgconfig
 
 #git clone https://github.com/curl/curl --depth=1 --branch curl-7_88_1
