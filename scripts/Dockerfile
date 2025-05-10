@@ -41,9 +41,6 @@ RUN set -xe \
 # 克隆依赖库
 WORKDIR /tmp
 
-# 复制补丁文件
-COPY patches/ /tmp/patches/
-
 # 构建mbedtls静态库
 RUN git clone --depth=1 --recursive --shallow-submodules https://github.com/Mbed-TLS/mbedtls.git /tmp/mbedtls \
     && python3 -m venv /tmp/.venv \
@@ -60,8 +57,7 @@ RUN git clone --depth=1 --recursive --shallow-submodules https://github.com/Mbed
     && if [ "$(uname -m)" = "armv7l" ] || [ "$(uname -m)" = "aarch64" ] || [ "${TARGETPLATFORM}" = "linux/arm/v7" ] || [ "${TARGETPLATFORM}" = "linux/arm64" ]; then \
         echo "Detected ARM platform (arm/v7 or arm64), applying bounds-check patch" && \
         export CFLAGS="-Wno-error=array-bounds" && \
-        export CXXFLAGS="-Wno-error=array-bounds" && \
-        patch -p1 < /tmp/patches/0002-mbedtls-arm-bounds-check.patch || true; \
+        export CXXFLAGS="-Wno-error=array-bounds"; \
     fi \
     && cmake -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_PROGRAMS=OFF -DENABLE_TESTING=OFF -DUSE_STATIC_MBEDTLS_LIBRARY=ON -DUSE_SHARED_MBEDTLS_LIBRARY=OFF . \
     && cmake --build build -- -j${THREADS} \
