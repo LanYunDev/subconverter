@@ -111,5 +111,5 @@ cat "$TEMP_DIR/webserver_httplib.cpp" > src/server/webserver_httplib.cpp
 # 修改Server响应头，不再暴露SubConverter信息
 # sed -i 's/res\.set_header("Server", "subconverter\/" VERSION " cURL\/" LIBCURL_VERSION);/res.set_header("Server", "nginx");/' src/server/webserver_httplib.cpp
 
-echo -e "${GREEN}特征标头清除完成！${NC}"
+echo -e "${GREEN}HTTP特征标头清除完成！${NC}"
 # echo -e "${YELLOW}注意: 如果编译出现问题，可以使用备份文件恢复原始状态。${NC}" 

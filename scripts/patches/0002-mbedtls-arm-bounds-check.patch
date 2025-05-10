@@ -1,0 +1,26 @@
+diff --git a/core/common.h b/core/common.h
+index abcdefab..01234567 100644
+--- a/core/common.h
++++ b/core/common.h
+@@ -232,7 +232,7 @@ void mbedtls_xor( unsigned char *r, const unsigned char *a, const unsigned char
+     mbedtls_ct_memcpy_if_eq( r, buf, len, eq_mask );
+ #else
+     for( size_t i = 0; i < len; i++ ) {
+-        r[i] = a[i] ^ b[i];
++        r[i] = a[i] ^ b[i]; /* ARM编译器可能报数组越界，但循环条件保证了安全 */
+     }
+ #endif
+ }
+diff --git a/tf-psa-crypto/core/common.h b/tf-psa-crypto/core/common.h
+index abcdefab..01234567 100644
+--- a/tf-psa-crypto/core/common.h
++++ b/tf-psa-crypto/core/common.h
+@@ -232,7 +232,7 @@ void mbedtls_xor( unsigned char *r, const unsigned char *a, const unsigned char
+     mbedtls_ct_memcpy_if_eq( r, buf, len, eq_mask );
+ #else
+     for( size_t i = 0; i < len; i++ ) {
+-        r[i] = a[i] ^ b[i];
++        r[i] = a[i] ^ b[i]; /* ARM编译器可能报数组越界，但循环条件保证了安全 */
+     }
+ #endif
+ } 
