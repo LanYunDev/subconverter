@@ -1486,8 +1486,24 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                 singleproxy["password"] >>= password;
                 if (password.empty())
                     singleproxy["auth"] >>= password;
-                singleproxy["up"] >>= up;
-                singleproxy["down"] >>= down;
+                if (singleproxy["up"].IsDefined()) {
+                    singleproxy["up"] >>= up;
+                    if (up.empty()) {
+                        try {
+                            up = singleproxy["up"].as<std::string>();
+                        } catch (const YAML::BadConversion& e) {
+                        }
+                    }
+                }
+                if (singleproxy["down"].IsDefined()) {
+                    singleproxy["down"] >>= down;
+                    if (down.empty()) {
+                        try {
+                            down = singleproxy["down"].as<std::string>();
+                        } catch (const YAML::BadConversion& e) {
+                        }
+                    }
+                }
                 singleproxy["obfs"] >>= obfsParam;
                 singleproxy["obfs-password"] >>= obfsPassword;
                 singleproxy["sni"] >>= host;
